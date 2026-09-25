@@ -802,3 +802,55 @@ fn test_total_supply_tracks_mint_burn_mint_batch() {
     // The metadata-reported supply stays in lockstep with the direct ABI read.
     assert_eq!(s.token.get_metadata().total_supply, s.token.total_supply());
 }
+
+// Issue #371: Test that metadata and balances survive a TTL boundary.
+#[test]
+fn test_metadata_survives_ttl_boundary() {
+    let s = setup();
+
+    // Verify metadata is readable
+    let metadata = s.token.get_metadata();
+    assert_eq!(metadata.name, "Test Asset");
+    assert_eq!(metadata.symbol, "TST");
+
+    // Advance ledger past TTL threshold
+    s.env.ledger().set_sequence_number(500_000);
+
+    // Verify metadata still exists after ledger advance
+    let metadata_after = s.token.get_metadata();
+    assert_eq!(
+        metadata_after.name, "Test Asset",
+        "Metadata must survive TTL boundary"
+    );
+    assert_eq!(metadata_after.symbol, "TST");
+}
+
+// Issue #371: Test that account balances survive a TTL boundary.
+#[test]
+fn test_balances_survive_ttl_boundary() {
+    let s = setup();
+
+    // Initial state: admin has 1000, user has 0
+    assert_eq!(s.token.balance(&s.admin), 1_000);
+    assert_eq!(s.token.balance(&s.user), 0);
+
+    // Transfer some tokens
+    s.token.transfer(&s.admin, &s.user, &300);
+    assert_eq!(s.token.balance(&s.admin), 700);
+    assert_eq!(s.token.balance(&s.user), 300);
+
+    // Advance ledger past TTL threshold
+    s.env.ledger().set_sequence_number(500_000);
+
+    // Verify balances still exist after ledger advance
+    assert_eq!(
+        s.token.balance(&s.admin),
+        700,
+        "Admin balance must survive TTL boundary"
+    );
+    assert_eq!(
+        s.token.balance(&s.user),
+        300,
+        "User balance must survive TTL boundary"
+    );
+}
