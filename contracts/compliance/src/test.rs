@@ -381,3 +381,70 @@ fn test_prune_expired_removes_from_allowlist() {
     assert!(client.get_record(&user_expire).is_none());
     assert!(client.get_record(&user_persist).is_some());
 }
+
+// Issue #371: Test that state survives a TTL boundary (ledger advance).
+#[test]
+fn test_admin_state_survives_ttl_boundary() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+
+    let contract_id = env.register(ComplianceContract, ());
+    let client = ComplianceContractClient::new(&env, &contract_id);
+
+    // Initialize the contract (sets Admin key, bumps TTL)
+    client.initialize(&admin);
+
+    // Verify Admin is readable immediately
+    assert_eq!(client.get_admin(), admin);
+
+    // Advance the ledger by a large amount (simulate time passing)
+    // This tests that the TTL bump extends past this advance.
+    // The bump amount is typically 30 days of ledgers (~500K ledgers).
+    // Advancing by a significant amount and verifying the key survives
+    // ensures the TTL was properly extended.
+    env.ledger().set_sequence_number(500_000);
+
+    // Verify Admin key still exists after ledger advance
+    assert_eq!(
+        client.get_admin(),
+        admin,
+        "Admin state must survive TTL boundary"
+    );
+}
+
+// Issue #371: Test that allowlist entries survive TTL boundary.
+#[test]
+fn test_allowlist_entries_survive_ttl_boundary() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+
+    let contract_id = env.register(ComplianceContract, ());
+    let client = ComplianceContractClient::new(&env, &contract_id);
+
+    // Initialize and add users
+    client.initialize(&admin);
+    let us = String::from_str(&env, "US");
+    client.add_to_allowlist(&admin, &user1, &us, &0);
+    client.add_to_allowlist(&admin, &user2, &us, &0);
+
+    // Verify entries exist
+    let initial_list = client.get_allowlist();
+    assert_eq!(initial_list.len(), 2);
+
+    // Advance ledger past TTL threshold
+    env.ledger().set_sequence_number(500_000);
+
+    // Verify entries still exist after ledger advance
+    let after_ttl_list = client.get_allowlist();
+    assert_eq!(
+        after_ttl_list.len(),
+        2,
+        "Allowlist entries must survive TTL boundary"
+    );
+    assert!(client.is_allowed(&user1));
+    assert!(client.is_allowed(&user2));
+}
